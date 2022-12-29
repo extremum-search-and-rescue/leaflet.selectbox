@@ -1,7 +1,18 @@
 namespace L {
+    export interface Evented {
+        on(event: "selectbox:end", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        off(event: "selectbox:end", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        fire(event: "selectbox:end", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+    }
+
     export interface Map extends Evented {
         selectBox: L.Handler.SelectBox
     }
+    export interface MapOptions {
+        selectBox: boolean
+    }
+
+    type SelectBoxEvent = { selectBounds: L.LatLngBounds };
     export namespace Handler {
         export class SelectBox extends L.Handler {
             private _map: L.Map;
@@ -10,7 +21,7 @@ namespace L {
             private _resetStateTimeout: number;
             private _moved?: boolean;
             private _startPoint?: Point;
-            private _selectedObjects?: Array<L.Layer>;
+            private _selectedObjects?: Array<L.IEditable & ( L.EditableGisCircle | L.EditableGisMarker | L.EditableGisPolygon | L.EditableGisPolyline | L.GisGrid)>;
             private _selectionRectangle?: any;
             private _point: Point;
             private _box: HTMLDivElement;
@@ -23,14 +34,14 @@ namespace L {
                 map.on('unload', this._destroy, this);
             }
 
-            addHooks () {
+            override addHooks () {
                 this._map.on('selectbox:end', this._onSelectBoxEnd, this);
                 this._map.on('selectbox:copyall', this._onCopySelected, this);
                 this._map.on('selectbox:deleteall', this._onDeleteSelected, this);
                 L.DomEvent.on(this._container, 'mousedown', this._onMouseDown, this);
             }
 
-            removeHooks () {
+            override removeHooks () {
                 this._map.off('selectbox:end', this._onSelectBoxEnd, this);
                 this._map.off('selectbox:copyall', this._onCopySelected, this);
                 this._map.off('selectbox:deleteall', this._onDeleteSelected, this);
@@ -58,7 +69,7 @@ namespace L {
                 }
             }
 
-            _onMouseDown(e) {
+            _onMouseDown(e: MouseEvent) {
                 if (!e.ctrlKey || ((e.which !== 1) && (e.button !== 1))) {
                     return;
                 }
@@ -87,18 +98,20 @@ namespace L {
                     },
                     this);
                 if (this._selectedObjects && this._selectedObjects.length > 0) {
-                    for (let i = 0; i < this._selectedObjects.length > 0; i++) {
+                    for (let i = 0; i < this._selectedObjects.length; i++) {
                         const l = this._selectedObjects[i];
-                        if (l._icon)
+                        if (l instanceof L.EditableGisMarker && l._icon)
                             L.DomUtil.removeClass(l._icon, 'leaflet-userobject-selected');
-                        else if (l._path)
-                            L.DomUtil.removeClass(l._path, 'leaflet-userobject-selected');
+                        else if (l instanceof L.EditableGisCircle || l instanceof L.EditableGisPolygon || l instanceof L.EditableGisPolyline) {
+                            if (l._path)
+                                L.DomUtil.removeClass(l._path, 'leaflet-userobject-selected');
+                        }
                     }
                     this._selectedObjects = [];
                 }
             }
 
-            _onMouseMove(e) {
+            _onMouseMove(e: MouseEvent) {
                 if (!this._moved) {
                     this._moved = true;
 
@@ -138,7 +151,7 @@ namespace L {
                     this);
             }
 
-            _onMouseUp(e) {
+            _onMouseUp(e: MouseEvent) {
                 if ((e.which !== 1) && (e.button !== 1)) {
                     return;
                 }
@@ -164,7 +177,7 @@ namespace L {
                 this._map.fire('selectbox:end', { selectBounds: bounds });
             }
 
-            _onSelectBoxEnd (e) {
+            _onSelectBoxEnd(e: SelectBoxEvent) {
                 if (!this._selectedObjects) this._selectedObjects = [];
                 //set opposite bounds
                 let east = -180.0;
@@ -172,31 +185,47 @@ namespace L {
                 let west = 180.0;
                 let south = 85;
 
-                this._map.eachLayer(l => {
+                const eachLayer = (l: Layer) => {
                     if (!l.typeOf || this._selectedObjects.find(o => l._leaflet_id === o._leaflet_id)) return;
-                    if (l._icon && l._icon.className && (l._icon.className.indexOf('-vertex-icon') > -1 || l._icon.className.indexOf('-middle-icon') > -1)) return;
-                    if (e.selectBounds.contains(l._latlngs || l._latlng)) {
+                    if (e.selectBounds.contains(l._latlngs || l._latlng || (l.getBounds && l.getBounds()))) {
 
-                        if (l.getBounds) {
+                        if (l instanceof L.Polyline) {
                             const layerBounds = l.getBounds();
                             west = Math.min(layerBounds.getWest(), west);
                             south = Math.min(layerBounds.getSouth(), south);
                             east = Math.max(layerBounds.getEast(), east);
                             north = Math.max(layerBounds.getNorth(), north);
                         }
-                        else if (l._latlng) {
-                            west = Math.min(l._latlng.lng, west);
-                            south = Math.min(l._latlng.lat, south);
-                            east = Math.max(l._latlng.lng, east);
-                            north = Math.max(l._latlng.lat, north);
+                        else if (l instanceof L.Marker) {
+                            west = Math.min(l.getLatLng().lng, west);
+                            south = Math.min(l.getLatLng().lat, south);
+                            east = Math.max(l.getLatLng().lng, east);
+                            north = Math.max(l.getLatLng().lat, north);
                         }
 
                         this._selectedObjects.push(l);
+                        //UNDONE: support single CircleMarker it doesn't have any of following
                         if (l._icon)
                             L.DomUtil.addClass(l._icon, 'leaflet-userobject-selected');
-                        else if(l._path)
+                        else if (l._path)
                             L.DomUtil.addClass(l._path, 'leaflet-userobject-selected');
                     }
+                }
+                
+                this._map.editTools.featuresLayer.eachLayer(l => eachLayer(l));
+                userGrids.eachLayer(l => {
+                    if (l.typeOf === 'grid') {
+                        const layerBounds = l.getBounds();
+                        if (e.selectBounds.contains(layerBounds)) {
+                            west = Math.min(layerBounds.getWest(), west);
+                            south = Math.min(layerBounds.getSouth(), south);
+                            east = Math.max(layerBounds.getEast(), east);
+                            north = Math.max(layerBounds.getNorth(), north);
+                            this._selectedObjects.push(l);
+                        }
+                    }
+                    if (l._path)
+                        L.DomUtil.addClass(l._path, 'leaflet-userobject-selected');
                 });
 
                 if (this._selectedObjects && this._selectedObjects.length > 0) {
@@ -214,7 +243,7 @@ namespace L {
                                 {
                                     text: "Копировать объекты",
                                     context: this,
-                                    callback (showLocation) {
+                                    callback (showLocation: L.ContextMenuEvent) {
                                         this._map.fire('selectbox:copyall');
                                     }
                                 },
@@ -222,7 +251,7 @@ namespace L {
                                 {
                                     text: "Удалить объекты",
                                     context: this,
-                                    callback (showLocation) {  
+                                    callback(showLocation: L.ContextMenuEvent) {  
                                         this._map.fire('selectbox:deleteall');
                                     }
                                 }
@@ -232,17 +261,18 @@ namespace L {
                 }
             }
 
-            _onKeyDown(e) {
+            _onKeyDown(e: KeyboardEvent) {
                 if (e.keyCode === 27) {
                     this._finish();
                 }
             }
 
-            _onDeleteSelected(e) {
+            _onDeleteSelected(e: any) {
                 if (e && e.selectedObject && !this._selectedObjects.find(f => f === e.selectedObject)) return; //object was deleted but not from array of selected objects, they should be left intact
                 for (let i = 0; i < this._selectedObjects.length; i++) {
                     this._map.removeLayer(this._selectedObjects[i]);
                     this._map.editTools.featuresLayer.removeLayer(this._selectedObjects[i]);
+                    userGrids.removeLayer(this._selectedObjects[i]);
                     this._map.fire(`${this._selectedObjects[i].typeOf}supdated`);
                 }
                 this._map.layerControl.saveAllUserObjects();
@@ -255,7 +285,7 @@ namespace L {
             _onCopySelected() {
                 const geoJsonArray = [];
                 for (let i = 0; i < this._selectedObjects.length; i++) {
-                    geoJsonArray.push(this._selectedObjects[i].toStyledGeoJSON());
+                    geoJsonArray.push(this._selectedObjects[i].feature);
                 }
                 Gis.Clipboard.copyTextToClipboard(JSON.stringify(geoJsonArray));
                 this._map.fire('gis:notify', { message: `Cкопировано объектов: ${geoJsonArray.length}` })
@@ -263,11 +293,12 @@ namespace L {
 
             _onDeselect() {
                 for (let i = 0; i < this._selectedObjects.length; i++) {
-                    if (this._selectedObjects[i]._icon) {
-                        L.DomUtil.removeClass(this._selectedObjects[i]._icon, 'leaflet-userobject-selected');
+                    const drawable = this._selectedObjects[i];
+                    if (drawable._icon) {
+                        L.DomUtil.removeClass(drawable._icon, 'leaflet-userobject-selected');
                     }
-                    else if (this._selectedObjects[i]._path) {
-                        L.DomUtil.removeClass(this._selectedObjects[i]._path, 'leaflet-userobject-selected');
+                    else if (drawable._path) {
+                        L.DomUtil.removeClass(drawable._path, 'leaflet-userobject-selected');
                     }
                 }
                 delete this._selectedObjects;
@@ -275,8 +306,8 @@ namespace L {
                 this._map.off('gis:editable:delete', this._onDeleteSelected);
                 this._map.removeLayer(this._selectionRectangle);
                 delete this._selectionRectangle;
-            },
-            _onKeyDownWhenObjectsSelected (e) {
+            }
+            _onKeyDownWhenObjectsSelected (e: KeyboardEvent) {
                 if (!(this._selectedObjects && this._selectedObjects.length > 0)) return;
 
                 if (e.keyCode === 46 || e.keyCode === 8) { //Delete, Backspace
@@ -292,8 +323,8 @@ namespace L {
         };
 
     }
-    export function selectBox (opts) {
-        return new L.Handler.SelectBox(opts);
+    export function selectBox (map: L.Map) {
+        return new L.Handler.SelectBox(map);
     }
 }
 // @section Handlers
