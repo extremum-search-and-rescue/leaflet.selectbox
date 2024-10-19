@@ -3,6 +3,15 @@ namespace L {
         on(event: "selectbox:end", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
         off(event: "selectbox:end", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
         fire(event: "selectbox:end", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        on(event: "selectbox:copyall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        off(event: "selectbox:copyall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        fire(event: "selectbox:copyall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        on(event: "selectbox:gpxall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        off(event: "selectbox:gpxall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        fire(event: "selectbox:gpxall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        on(event: "selectbox:deleteall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        off(event: "selectbox:deleteall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
+        fire(event: "selectbox:deleteall", fn: ((event: SelectBoxEvent) => void), context: L.Handler.SelectBox): this;
     }
 
     export interface Map extends Evented {
@@ -37,6 +46,7 @@ namespace L {
             override addHooks () {
                 this._map.on('selectbox:end', this._onSelectBoxEnd, this);
                 this._map.on('selectbox:copyall', this._onCopySelected, this);
+                this._map.on('selectbox:gpxall', this._onGpxSelected, this);
                 this._map.on('selectbox:deleteall', this._onDeleteSelected, this);
                 L.DomEvent.on(this._container, 'mousedown', this._onMouseDown, this);
             }
@@ -44,6 +54,7 @@ namespace L {
             override removeHooks () {
                 this._map.off('selectbox:end', this._onSelectBoxEnd, this);
                 this._map.off('selectbox:copyall', this._onCopySelected, this);
+                this._map.off('selectbox:gpxall', this._onGpxSelected, this);
                 this._map.off('selectbox:deleteall', this._onDeleteSelected, this);
                 L.DomEvent.off(this._container, 'mousedown', this._onMouseDown, this);
             }
@@ -196,7 +207,7 @@ namespace L {
                             east = Math.max(layerBounds.getEast(), east);
                             north = Math.max(layerBounds.getNorth(), north);
                         }
-                        else if (l instanceof L.Marker) {
+                        else if (l instanceof L.Marker /* || L.CircleMarker */) {
                             west = Math.min(l.getLatLng().lng, west);
                             south = Math.min(l.getLatLng().lat, south);
                             east = Math.max(l.getLatLng().lng, east);
@@ -241,14 +252,24 @@ namespace L {
                             contextmenuInheritItems: false,
                             contextmenuItems: [
                                 {
+                                    rum: "context-copy-selectbox-objects",
                                     text: "Копировать объекты",
                                     context: this,
                                     callback (showLocation: L.ContextMenuEvent) {
                                         this._map.fire('selectbox:copyall');
                                     }
                                 },
+                                {
+                                    rum: "context-gpx-selectbox-objects",
+                                    text: "Сохранить в .gpx",
+                                    context: this,
+                                    callback(showLocation: L.ContextMenuEvent) {
+                                        this._map.fire('selectbox:gpxall');
+                                    }
+                                },
                                 '-',
                                 {
+                                    rum: "context-delete-selectbox-objects",
                                     text: "Удалить объекты",
                                     context: this,
                                     callback(showLocation: L.ContextMenuEvent) {  
@@ -289,6 +310,13 @@ namespace L {
                 }
                 Gis.Clipboard.copyTextToClipboard(JSON.stringify(geoJsonArray));
                 this._map.fire('gis:notify', { message: `Cкопировано объектов: ${geoJsonArray.length}` })
+            }
+            _onGpxSelected() {
+                const geoJsonArray = [];
+                for (let i = 0; i < this._selectedObjects.length; i++) {
+                    geoJsonArray.push(this._selectedObjects[i].feature);
+                }
+                saveTaskToGpx(geoJsonArray);
             }
 
             _onDeselect() {
